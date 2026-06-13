@@ -1,0 +1,93 @@
+# eglot-signature-posframe
+
+Show [eglot](https://github.com/joaotavora/eglot) signature help in a
+[posframe](https://github.com/tumashu/posframe) (child frame) near point,
+instead of the echo area.
+
+## Motivation
+I have using eglot many years. `eglot` is a great package, with many integration Emacs's default behaviours. But I have started writing Rust many times with eglot, I had had a problem to check signature of function/method. The packages in Rust have many, many methods and countless traits, so I can not remember them and signature. 
+Currently, I use `eglot` with `corfu` . It's great, but I can't see signature while writing code because it shows on eldoc. Yes I know eldoc offers method showing help to buffer instead of echo area, but I want to see signature while writing, without moving my eye. 
+
+So I made this package as simple as possible with LLM. No warranty while using this package, and this package is fully written by LLM. Please stop using this if you worry about LLM-generated code.
+
+## Features
+
+- **Display signature only**
+  - Only the function signature returned by the language
+    server is shown. Documentation and hover help are never displayed — this
+    package never touches `eglot-hover-eldoc-function`.
+- **Above or below point**
+  - Choose where the posframe appears relative to cursor, and flip it on the fly.
+- **Auto hide** 
+  - When eglot reports no signature while the posframe is visible,
+    the posframe is hidden automatically. It also hides when you switch buffers.
+
+## Requirements
+
+- Emacs 29.1+
+- [posframe](https://github.com/tumashu/posframe) 1.1.0+
+- [eglot](https://github.com/joaotavora/eglot) 1.15+ (bundled with Emacs 29+)
+
+A graphical Emacs frame is required; posframe does not work in a terminal.
+
+## Installation
+
+Place `eglot-signature-posframe.el` on your `load-path` and:
+
+```elisp
+(require 'eglot-signature-posframe)
+```
+
+Or with `use-package` and a package manager that can fetch from Git:
+
+```elisp
+(use-package eglot-signature-posframe
+  :hook (eglot-managed-mode . eglot-signature-posframe-mode))
+```
+
+Or with `elpaca` or `straight`:
+
+```elisp
+(elpaca (elpaca (key-layout-mapper :type git :host github :repo "derui/eglot-signature-posframe")))
+```
+
+## Usage
+
+Enable the minor mode in eglot-managed buffers:
+
+```elisp
+(add-hook 'eglot-managed-mode-hook #'eglot-signature-posframe-mode)
+```
+
+As you move point inside a function call, the signature appears in a child
+frame. When there is no signature, the frame disappears.
+
+To flip the posframe between above and below point interactively:
+
+```
+M-x eglot-signature-posframe-toggle-position
+```
+
+## Customization
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `eglot-signature-posframe-position` | `below` | `below` or `above` point. |
+| `eglot-signature-posframe-delay` | `0.2` | Idle seconds before requesting a signature. |
+| `eglot-signature-posframe-border-width` | `1` | Internal border width in pixels. |
+| `eglot-signature-posframe-border-color` | `"gray50"` | Internal border color. |
+| `eglot-signature-posframe-max-width` | `nil` | Max width in characters, or `nil` for no limit. |
+| `eglot-signature-posframe-poshandler-offset` | `0` | Extra vertical gap in pixels between point and the posframe. |
+| `eglot-signature-posframe-parameters` | `nil` | Extra frame parameters passed to `posframe-show`. |
+
+The text uses the `eglot-signature-posframe-face` face (inherits `default` by
+default), so you can restyle the foreground/background:
+
+```elisp
+(set-face-attribute 'eglot-signature-posframe-face nil
+                    :background "#2d2d2d" :foreground "#dcdcdc")
+```
+
+## License
+
+Apache Licence 2.0. See [LICENSE](LICENSE).
