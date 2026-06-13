@@ -77,7 +77,7 @@ M-x eglot-signature-posframe-toggle-position
 | `eglot-signature-posframe-border-width` | `1` | Internal border width in pixels. |
 | `eglot-signature-posframe-border-color` | `"gray50"` | Internal border color. |
 | `eglot-signature-posframe-max-width` | `nil` | Max width in characters, or `nil` for no limit. |
-| `eglot-signature-posframe-poshandler-offset` | `0` | Extra vertical gap in pixels between point and the posframe. |
+| `eglot-signature-posframe-y-pixel-offset` | `0` | Vertical offset in pixels added to the posframe position (positive moves down). |
 | `eglot-signature-posframe-parameters` | `nil` | Extra frame parameters passed to `posframe-show`. |
 
 The text uses the `eglot-signature-posframe-face` face (inherits `default` by

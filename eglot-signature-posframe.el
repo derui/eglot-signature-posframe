@@ -87,9 +87,9 @@ flooding the language server while typing."
   :type '(alist :key-type symbol :value-type sexp)
   :group 'eglot-signature-posframe)
 
-(defcustom eglot-signature-posframe-poshandler-offset 0
-  "Extra vertical offset in pixels applied to the posframe position.
-Positive values move the posframe further away from point."
+(defcustom eglot-signature-posframe-y-pixel-offset 0
+  "Vertical offset in pixels added to the posframe position.
+Positive values move the posframe downward."
   :type 'integer
   :group 'eglot-signature-posframe)
 
@@ -106,31 +106,13 @@ Positive values move the posframe further away from point."
 
 ;;; Position handlers
 
-(defun eglot-signature-posframe--poshandler-below (info)
-  "Place the posframe just below point.
-INFO is the plist passed by posframe to its poshandler."
-  (let ((position (plist-get info :position))
-        (font-height (plist-get info :font-height)))
-    (cons
-     (car position)
-     (+ (cdr position) font-height
-        eglot-signature-posframe-poshandler-offset))))
-
-(defun eglot-signature-posframe--poshandler-above (info)
-  "Place the posframe just above point.
-INFO is the plist passed by posframe to its poshandler."
-  (let ((position (plist-get info :position))
-        (posframe-height (plist-get info :posframe-height)))
-    (cons
-     (car position)
-     (- (cdr position) posframe-height
-        eglot-signature-posframe-poshandler-offset))))
-
 (defun eglot-signature-posframe--poshandler ()
-  "Return the poshandler matching `eglot-signature-posframe-position'."
+  "Return the poshandler matching `eglot-signature-posframe-position'.
+These built-in posframe handlers resolve the integer point in
+INFO's `:position' through `posn-at-point' themselves."
   (if (eq eglot-signature-posframe-position 'above)
-      #'eglot-signature-posframe--poshandler-above
-    #'eglot-signature-posframe--poshandler-below))
+      #'posframe-poshandler-point-bottom-left-corner-upward
+    #'posframe-poshandler-point-bottom-left-corner))
 
 ;;; Showing and hiding
 
@@ -142,6 +124,7 @@ INFO is the plist passed by posframe to its poshandler."
      :string string
      :position (point)
      :poshandler (eglot-signature-posframe--poshandler)
+     :y-pixel-offset eglot-signature-posframe-y-pixel-offset
      :font-height nil
      :foreground-color
      (face-foreground 'eglot-signature-posframe-face nil t)
