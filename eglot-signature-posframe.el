@@ -115,6 +115,11 @@ Positive values move the posframe downward."
 (defvar-local eglot-signature-posframe--frame nil
   "The child frame returned by the last `posframe-show' call, or nil.")
 
+(defvar-local eglot-signature-posframe--signature-key nil
+  "First line of the last displayed signature, stripped of text properties.
+Used to detect when the active signature changes so the frame can be
+re-created rather than just refreshed.")
+
 ;;; Position handlers
 
 (defun eglot-signature-posframe--poshandler ()
@@ -133,40 +138,57 @@ INFO's `:position' through `posn-at-point' themselves."
        (frame-live-p eglot-signature-posframe--frame)
        (frame-visible-p eglot-signature-posframe--frame)))
 
+(defun eglot-signature-posframe--signature-key (string)
+  "Return the first line of STRING with all text properties removed."
+  (substring-no-properties (car (split-string string "\n"))))
+
+(defun eglot-signature-posframe--create-frame (string)
+  "Create or re-create the posframe displaying STRING."
+  (setq eglot-signature-posframe--frame
+        (posframe-show
+         eglot-signature-posframe--buffer
+         :string string
+         :position (point)
+         :poshandler (eglot-signature-posframe--poshandler)
+         :y-pixel-offset eglot-signature-posframe-y-pixel-offset
+         :foreground-color
+         (face-foreground 'eglot-signature-posframe-face nil t)
+         :background-color
+         (face-background 'eglot-signature-posframe-face nil t)
+         :border-width eglot-signature-posframe-border-width
+         :border-color eglot-signature-posframe-border-color
+         :max-width eglot-signature-posframe-max-width
+         :accept-focus nil
+         :left-fringe 8
+         :right-fringe 8
+         :hidehandler #'posframe-hidehandler-when-buffer-switch
+         :override-parameters eglot-signature-posframe-parameters)))
+
 (defun eglot-signature-posframe--show (string)
   "Show STRING in the signature posframe near point.
-If the posframe is already visible, only the buffer content is updated so
-the frame does not move while the user types within the same call.
-Otherwise a new posframe is created at the current point."
+If the posframe is already visible and the signature has not changed
+\(detected via the first line stripped of text properties), only the
+buffer content is updated so the frame does not move.  When the signature
+changes, the frame is deleted and re-created at the current point."
   (when (posframe-workable-p)
-    (if (eglot-signature-posframe--frame-visible-p)
+    (if-let* ((key (eglot-signature-posframe--signature-key string))
+              ((and (eglot-signature-posframe--frame-visible-p)
+                    (equal
+                     key eglot-signature-posframe--signature-key))))
         (with-current-buffer (get-buffer-create
                               eglot-signature-posframe--buffer)
           (let ((inhibit-read-only t))
             (erase-buffer)
             (insert string)))
-      (setq
-       eglot-signature-posframe--frame
-       (posframe-show
-        eglot-signature-posframe--buffer
-        :string string
-        :position (point)
-        :poshandler (eglot-signature-posframe--poshandler)
-        :y-pixel-offset eglot-signature-posframe-y-pixel-offset
-        :foreground-color
-        (face-foreground 'eglot-signature-posframe-face nil t)
-        :background-color
-        (face-background 'eglot-signature-posframe-face nil t)
-        :border-width eglot-signature-posframe-border-width
-        :border-color eglot-signature-posframe-border-color
-        :max-width eglot-signature-posframe-max-width
-        :accept-focus nil
-        :hidehandler #'posframe-hidehandler-when-buffer-switch
-        :override-parameters eglot-signature-posframe-parameters)))))
+      (posframe-delete eglot-signature-posframe--buffer)
+      (setq eglot-signature-posframe--signature-key key)
+      (eglot-signature-posframe--create-frame string))))
 
 (defun eglot-signature-posframe--hide ()
   "Hide the signature posframe if it is visible."
-  (setq eglot-signature-posframe--frame nil)
+  (setq
+   eglot-signature-posframe--frame nil
+   eglot-signature-posframe--signature-key nil)
   (posframe-hide eglot-signature-posframe--buffer))
 
 ;;; Requesting signatures
