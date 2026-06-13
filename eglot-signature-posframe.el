@@ -112,10 +112,8 @@ Positive values move the posframe downward."
 (defvar-local eglot-signature-posframe--timer nil
   "Idle timer scheduling the next signature request.")
 
-(defvar-local eglot-signature-posframe--last-signature nil
-  "First line of the last displayed signature, without text properties.
-Used to detect when the signature changes so the posframe is repositioned
-only on a new signature, not on every keystroke within the same call.")
+(defvar-local eglot-signature-posframe--frame nil
+  "The child frame returned by the last `posframe-show' call, or nil.")
 
 ;;; Position handlers
 
@@ -129,41 +127,46 @@ INFO's `:position' through `posn-at-point' themselves."
 
 ;;; Showing and hiding
 
+(defun eglot-signature-posframe--frame-visible-p ()
+  "Return non-nil when the signature posframe is currently visible."
+  (and eglot-signature-posframe--frame
+       (frame-live-p eglot-signature-posframe--frame)
+       (frame-visible-p eglot-signature-posframe--frame)))
+
 (defun eglot-signature-posframe--show (string)
   "Show STRING in the signature posframe near point.
-When the first line of STRING (without text properties) matches the
-previously displayed signature, the posframe is not repositioned so it
-stays stable while the user types within the same function call."
-  (when-let* (((posframe-workable-p))
-              (key
-               (substring-no-properties
-                (car (split-string string "\n"))))
-              (same-signature
-               (not
-                (equal
-                 key eglot-signature-posframe--last-signature))))
-    (setq eglot-signature-posframe--last-signature key)
-    (posframe-show
-     eglot-signature-posframe--buffer
-     :string string
-     :position (point)
-     :poshandler (eglot-signature-posframe--poshandler)
-     :y-pixel-offset eglot-signature-posframe-y-pixel-offset
-     :font-height nil
-     :foreground-color
-     (face-foreground 'eglot-signature-posframe-face nil t)
-     :background-color
-     (face-background 'eglot-signature-posframe-face nil t)
-     :internal-border-width eglot-signature-posframe-border-width
-     :internal-border-color eglot-signature-posframe-border-color
-     :max-width eglot-signature-posframe-max-width
-     :accept-focus nil
-     :hidehandler #'posframe-hidehandler-when-buffer-switch
-     :override-parameters eglot-signature-posframe-parameters)))
+If the posframe is already visible, only the buffer content is updated so
+the frame does not move while the user types within the same call.
+Otherwise a new posframe is created at the current point."
+  (when (posframe-workable-p)
+    (if (eglot-signature-posframe--frame-visible-p)
+        (with-current-buffer (get-buffer-create
+                              eglot-signature-posframe--buffer)
+          (let ((inhibit-read-only t))
+            (erase-buffer)
+            (insert string)))
+      (setq eglot-signature-posframe--frame
+            (posframe-show
+             eglot-signature-posframe--buffer
+             :string string
+             :position (point)
+             :poshandler (eglot-signature-posframe--poshandler)
+             :y-pixel-offset eglot-signature-posframe-y-pixel-offset
+             :font-height nil
+             :foreground-color
+             (face-foreground 'eglot-signature-posframe-face nil t)
+             :background-color
+             (face-background 'eglot-signature-posframe-face nil t)
+             :internal-border-width eglot-signature-posframe-border-width
+             :internal-border-color eglot-signature-posframe-border-color
+             :max-width eglot-signature-posframe-max-width
+             :accept-focus nil
+             :hidehandler #'posframe-hidehandler-when-buffer-switch
+             :override-parameters eglot-signature-posframe-parameters)))))
 
 (defun eglot-signature-posframe--hide ()
   "Hide the signature posframe if it is visible."
-  (setq eglot-signature-posframe--last-signature nil)
+  (setq eglot-signature-posframe--frame nil)
   (posframe-hide eglot-signature-posframe--buffer))
 
 ;;; Requesting signatures
