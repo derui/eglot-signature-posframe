@@ -37,12 +37,13 @@
 ;;
 ;; - Only the signature is shown.  Documentation and hover help are never
 ;;   displayed; this package never touches `eglot-hover-eldoc-function'.
-;; - The display is tied to editing a call: it appears when you type a
-;;   trigger character (`(' or `,', as advertised by the language
-;;   server) and refreshes as you fill in the arguments.  Ordinary
-;;   navigation does not bring it up.  `eglot-signature-posframe-show'
-;;   requests it on demand and `eglot-signature-posframe-hide' (or C-g)
-;;   dismisses it.
+;; - The display is tied to editing a call: it appears when an edit
+;;   leaves point right after a trigger character (`(' or `,', as
+;;   advertised by the language server), whether you typed it or a
+;;   completion expanded a call like `abc(|)' for you, and refreshes as
+;;   you fill in the arguments.  Ordinary navigation does not bring it
+;;   up.  `eglot-signature-posframe-show' requests it on demand and
+;;   `eglot-signature-posframe-hide' (or C-g) dismisses it.
 ;; - The signature can be shown either above or below point.  Use
 ;;   `eglot-signature-posframe-position' to set the default, or
 ;;   `eglot-signature-posframe-toggle-position' to flip it interactively.
@@ -125,6 +126,12 @@ overlay keeps its position instead of following point.")
   "Leading indent applied when the overlay was last anchored.
 Remembered so refreshes keep the column where the signature first
 appeared instead of jumping to point's current column.")
+
+(defvar-local eglot-signature-posframe--tick nil
+  "Value of `buffer-chars-modified-tick' after the last command.
+Compared on each command to tell whether the buffer was edited, so a
+completion that inserts a call like \"abc(|)\" activates the display the
+same way typing the trigger character does.")
 
 (defvar-local eglot-signature-posframe--active nil
   "Non-nil while a signature is being tracked for the current call.
@@ -253,26 +260,35 @@ These are the trigger characters advertised by the language server plus
             eglot-signature-posframe-extra-trigger-characters
             nil)))
 
-(defun eglot-signature-posframe--activate-p ()
-  "Non-nil when the command just run typed a trigger character."
-  (and (eq this-command 'self-insert-command)
-       (characterp last-command-event)
-       (member (char-to-string last-command-event)
-               (eglot-signature-posframe--trigger-characters))))
+(defun eglot-signature-posframe--activate-p (modified)
+  "Non-nil when the current command should open the signature display.
+MODIFIED is non-nil when the command edited the buffer.  Activation
+happens when an edit leaves point right after a trigger character: this
+covers typing `(' or `,' directly, and completion expanding a call such
+as \"abc(|)\" where the trigger character was inserted for you rather
+than typed."
+  (and modified
+       (let ((before (char-before)))
+         (and before
+              (member (char-to-string before)
+                      (eglot-signature-posframe--trigger-characters))))))
 
 (defun eglot-signature-posframe--post-command ()
   "Decide whether to request a signature after the current command.
-A signature is requested only when a trigger character was just typed,
-or while one is already active so the display keeps up with editing.
-Ordinary navigation outside a call requests nothing."
-  (cond
-   ((memq this-command '(keyboard-quit eglot-signature-posframe-hide))
-    (eglot-signature-posframe--hide))
-   ((eglot-signature-posframe--activate-p)
-    (setq eglot-signature-posframe--active t)
-    (eglot-signature-posframe--schedule))
-   (eglot-signature-posframe--active
-    (eglot-signature-posframe--schedule))))
+A signature is requested only when an edit just opened a call, or while
+one is already active so the display keeps up with editing.  Ordinary
+navigation outside a call requests nothing."
+  (let* ((tick (buffer-chars-modified-tick))
+         (modified (not (eql tick eglot-signature-posframe--tick))))
+    (setq eglot-signature-posframe--tick tick)
+    (cond
+     ((memq this-command '(keyboard-quit eglot-signature-posframe-hide))
+      (eglot-signature-posframe--hide))
+     ((eglot-signature-posframe--activate-p modified)
+      (setq eglot-signature-posframe--active t)
+      (eglot-signature-posframe--schedule))
+     (eglot-signature-posframe--active
+      (eglot-signature-posframe--schedule)))))
 
 ;;; Commands
 
@@ -320,9 +336,11 @@ This mode is intended to be enabled in eglot-managed buffers, e.g.:
   :group
   'eglot-signature-posframe
   (if eglot-signature-posframe-mode
-      (add-hook
-       'post-command-hook #'eglot-signature-posframe--post-command
-       nil t)
+      (progn
+        (setq eglot-signature-posframe--tick (buffer-chars-modified-tick))
+        (add-hook
+         'post-command-hook #'eglot-signature-posframe--post-command
+         nil t))
     (remove-hook
      'post-command-hook #'eglot-signature-posframe--post-command
      t)

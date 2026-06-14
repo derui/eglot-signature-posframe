@@ -17,10 +17,11 @@ No warranty while using this package, and this package is fully written by LLM. 
 ## Features
 
 - **Shows while you edit a call**
-  - The signature appears when you type a trigger character (`(` or `,`, as
-    advertised by the language server) and refreshes as you fill in the
-    arguments, so the active-parameter highlight keeps up. Ordinary
-    navigation does not bring it up.
+  - The signature appears when an edit leaves point right after a trigger
+    character (`(` or `,`, as advertised by the language server) — whether
+    you typed it or a completion expanded a call like `abc(|)` for you — and
+    refreshes as you fill in the arguments, so the active-parameter highlight
+    keeps up. Ordinary navigation does not bring it up.
   - `M-x eglot-signature-posframe-show` requests it on demand (e.g. when
     point is already inside a call); `M-x eglot-signature-posframe-hide` (or
     `C-g`) dismisses it.
