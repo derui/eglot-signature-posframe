@@ -1,4 +1,4 @@
-;;; eglot-signature-posframe.el --- Show eglot signature in a posframe -*- lexical-binding: t; -*-
+;;; eglot-signature-posframe.el --- Show eglot signature inline near point -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 derui
 
@@ -6,7 +6,7 @@
 ;; Maintainer: derui <derutakayu@gmail.com>
 ;; URL: https://github.com/derui/eglot-signature-posframe
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (posframe "1.1.0") (eglot "1.15"))
+;; Package-Requires: ((emacs "29.1") (eglot "1.15"))
 ;; Keywords: convenience, languages, tools
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -25,18 +25,29 @@
 ;;; Commentary:
 
 ;; `eglot-signature-posframe' shows the signature help provided by
-;; eglot in a child frame (posframe) near point, instead of in the echo
-;; area.
+;; eglot inline near point, instead of in the echo area.
+;;
+;; The signature is rendered as a virtual line using an overlay (a
+;; `before-string' or `after-string'), not a child frame.  This means it
+;; appears instantly, works in terminal frames, and has no
+;; platform-specific child-frame quirks.  The cost is that the virtual
+;; line displaces surrounding buffer text rather than floating over it.
 ;;
 ;; Features:
 ;;
 ;; - Only the signature is shown.  Documentation and hover help are never
 ;;   displayed; this package never touches `eglot-hover-eldoc-function'.
-;; - The posframe can be displayed either above or below point.  Use
+;; - The display is tied to editing a call: it appears when you type a
+;;   trigger character (`(' or `,', as advertised by the language
+;;   server) and refreshes as you fill in the arguments.  Ordinary
+;;   navigation does not bring it up.  `eglot-signature-posframe-show'
+;;   requests it on demand and `eglot-signature-posframe-hide' (or C-g)
+;;   dismisses it.
+;; - The signature can be shown either above or below point.  Use
 ;;   `eglot-signature-posframe-position' to set the default, or
 ;;   `eglot-signature-posframe-toggle-position' to flip it interactively.
-;; - When eglot reports no signature while a posframe is visible, the
-;;   posframe is hidden automatically.
+;; - When eglot reports no signature, e.g. once you leave the call, the
+;;   inline display is hidden automatically.
 ;;
 ;; Usage:
 ;;
@@ -44,16 +55,15 @@
 
 ;;; Code:
 
-(require 'posframe)
 (require 'eglot)
 
 (defgroup eglot-signature-posframe nil
-  "Show eglot signature help in a posframe."
+  "Show eglot signature help inline near point."
   :group 'eglot
   :prefix "eglot-signature-posframe-")
 
 (defcustom eglot-signature-posframe-position 'above
-  "Where the posframe is shown relative to point.
+  "Where the signature is shown relative to point.
 Either the symbol `below' (under point) or `above' (over point)."
   :type
   '(choice (const :tag "Below point" below)
@@ -68,17 +78,19 @@ flooding the language server while typing."
   :group 'eglot-signature-posframe)
 
 (defcustom eglot-signature-posframe-border-width 1
-  "Width in pixels of the posframe's outer border."
+  "Width in pixels of the box drawn around the signature.
+A value of 0 disables the box."
   :type 'integer
   :group 'eglot-signature-posframe)
 
 (defcustom eglot-signature-posframe-border-color "gray50"
-  "Color of the posframe's outer border."
+  "Color of the box drawn around the signature."
   :type 'string
   :group 'eglot-signature-posframe)
 
 (defcustom eglot-signature-posframe-max-width nil
-  "Maximum width of the posframe in characters, or nil for no limit."
+  "Maximum width of the signature in characters, or nil for no limit.
+Lines longer than this are truncated with an ellipsis."
   :type '(choice (const :tag "No limit" nil) integer)
   :group 'eglot-signature-posframe)
 
@@ -90,111 +102,111 @@ which is the signature itself, is displayed."
   :type 'boolean
   :group 'eglot-signature-posframe)
 
-(defcustom eglot-signature-posframe-parameters nil
-  "Extra frame parameters passed to `posframe-show'."
-  :type '(alist :key-type symbol :value-type sexp)
+(defcustom eglot-signature-posframe-extra-trigger-characters nil
+  "Extra characters, as strings, that activate the signature display.
+These are added to the trigger characters advertised by the language
+server (typically \"(\" and \",\").  For example, add \"<\" to also
+trigger on generic argument lists."
+  :type '(repeat string)
   :group 'eglot-signature-posframe)
-
-(defcustom eglot-signature-posframe-y-pixel-offset 0
-  "Vertical offset in pixels added to the posframe position.
-Positive values move the posframe downward."
-  :type 'integer
-  :group 'eglot-signature-posframe)
-
-(defface eglot-signature-posframe-face '((t :inherit default))
-  "Face used for the text shown in the signature posframe."
-  :group 'eglot-signature-posframe)
-
-(defconst eglot-signature-posframe--buffer
-  " *eglot-signature-posframe*"
-  "Name of the buffer backing the signature posframe.")
 
 (defvar-local eglot-signature-posframe--timer nil
   "Idle timer scheduling the next signature request.")
 
-(defvar-local eglot-signature-posframe--frame nil
-  "The child frame returned by the last `posframe-show' call, or nil.")
+(defvar-local eglot-signature-posframe--overlay nil
+  "Overlay carrying the inline signature, or nil when hidden.")
 
 (defvar-local eglot-signature-posframe--signature-key nil
-  "First line of the last displayed signature, stripped of text properties.
-Used to detect when the active signature changes so the frame can be
-re-created rather than just refreshed.")
+  "Signature text, stripped of properties, of the current overlay.
+Used to detect when the signature changes: while it is unchanged the
+overlay keeps its position instead of following point.")
 
-;;; Position handlers
+(defvar-local eglot-signature-posframe--indent ""
+  "Leading indent applied when the overlay was last anchored.
+Remembered so refreshes keep the column where the signature first
+appeared instead of jumping to point's current column.")
 
-(defun eglot-signature-posframe--poshandler ()
-  "Return the poshandler matching `eglot-signature-posframe-position'.
-These built-in posframe handlers resolve the integer point in
-INFO's `:position' through `posn-at-point' themselves."
-  (if (eq eglot-signature-posframe-position 'above)
-      #'posframe-poshandler-point-bottom-left-corner-upward
-    #'posframe-poshandler-point-bottom-left-corner))
+(defvar-local eglot-signature-posframe--active nil
+  "Non-nil while a signature is being tracked for the current call.
+Set when a trigger character is typed (or the signature is requested
+manually) and cleared when the display is hidden.  While it is non-nil
+the display refreshes as you edit so the active-argument highlight keeps
+up; while it is nil ordinary navigation does not request a signature.")
+
+;;; Rendering
+
+(defun eglot-signature-posframe--box ()
+  "Return a face spec drawing the configured box, or nil when disabled.
+A negative `:line-width' draws the box inside the character cells so the
+virtual line keeps the same height as real text."
+  (when (> eglot-signature-posframe-border-width 0)
+    `(:box (:line-width ,(- eglot-signature-posframe-border-width)
+                        :color ,eglot-signature-posframe-border-color))))
+
+(defun eglot-signature-posframe--render (string)
+  "Return STRING truncated to the max width, with the box face merged in.
+The signature's own faces, such as eglot's highlight of the active
+argument, are preserved; the box is appended without overriding them."
+  (let* ((width eglot-signature-posframe-max-width)
+         (lines (split-string string "\n"))
+         (lines (if width
+                    (mapcar (lambda (line)
+                              (truncate-string-to-width
+                               line width nil nil t))
+                            lines)
+                  lines))
+         ;; `split-string'/`string-join' yield a fresh string, so the
+         ;; in-place `add-face-text-property' never mutates the original.
+         (text (string-join lines "\n"))
+         (box (eglot-signature-posframe--box)))
+    (when box
+      (add-face-text-property 0 (length text) box t text))
+    text))
 
 ;;; Showing and hiding
 
-(defun eglot-signature-posframe--frame-visible-p ()
-  "Return non-nil when the signature posframe is currently visible."
-  (and eglot-signature-posframe--frame
-       (frame-live-p eglot-signature-posframe--frame)
-       (frame-visible-p eglot-signature-posframe--frame)))
-
-(defun eglot-signature-posframe--signature-key (string)
-  "Return the first line of STRING with all text properties removed."
-  (substring-no-properties (car (split-string string "\n"))))
-
-(defun eglot-signature-posframe--create-frame (string)
-  "Create or re-create the posframe displaying STRING."
-  (setq eglot-signature-posframe--frame
-        (posframe-show
-         eglot-signature-posframe--buffer
-         :string string
-         :position (point)
-         :poshandler (eglot-signature-posframe--poshandler)
-         :y-pixel-offset eglot-signature-posframe-y-pixel-offset
-         :foreground-color
-         (face-foreground 'eglot-signature-posframe-face nil t)
-         :background-color
-         (face-background 'eglot-signature-posframe-face nil t)
-         :border-width eglot-signature-posframe-border-width
-         :border-color eglot-signature-posframe-border-color
-         :max-width eglot-signature-posframe-max-width
-         :accept-focus nil
-         :left-fringe 8
-         :right-fringe 8
-         :hidehandler #'posframe-hidehandler-when-buffer-switch
-         :override-parameters eglot-signature-posframe-parameters)))
-
 (defun eglot-signature-posframe--show (string)
-  "Show STRING in the signature posframe near point.
-If the posframe is already visible and the signature has not changed
-\(detected via the first line stripped of text properties), only the
-buffer content is updated so the frame does not move.  When the signature
-changes, the frame is deleted and re-created at the current point."
-  (when (posframe-workable-p)
-    (if-let* ((key (eglot-signature-posframe--signature-key string))
-              ((and (eglot-signature-posframe--frame-visible-p)
-                    (equal
-                     key eglot-signature-posframe--signature-key))))
-        (with-current-buffer (get-buffer-create
-                              eglot-signature-posframe--buffer)
-          (let ((inhibit-read-only t))
-            (erase-buffer)
-            (insert string)))
-      (posframe-delete eglot-signature-posframe--buffer)
-      (setq eglot-signature-posframe--signature-key key)
-      (eglot-signature-posframe--create-frame string))))
+  "Show STRING inline near point as a virtual line.
+A single overlay is reused.  It is re-anchored to point, and indented to
+point's column, only when the signature text changes; while the same
+signature stays active the overlay keeps its position and just refreshes
+its content so the active-argument highlight still updates.  Whether the
+signature appears above or below is controlled by
+`eglot-signature-posframe-position'."
+  (let* ((rendered (eglot-signature-posframe--render string))
+         (above (eq eglot-signature-posframe-position 'above))
+         (key (substring-no-properties string))
+         (ov eglot-signature-posframe--overlay)
+         (same (and (overlayp ov) (overlay-buffer ov)
+                    (equal key eglot-signature-posframe--signature-key))))
+    (unless same
+      (let ((pos (if above (line-beginning-position) (line-end-position))))
+        (unless (overlayp ov)
+          (setq ov (make-overlay pos pos))
+          (setq eglot-signature-posframe--overlay ov))
+        (move-overlay ov pos pos (current-buffer)))
+      (setq eglot-signature-posframe--signature-key key
+            eglot-signature-posframe--indent
+            (make-string (current-column) ?\s)))
+    (let ((indent eglot-signature-posframe--indent))
+      (overlay-put ov 'before-string nil)
+      (overlay-put ov 'after-string nil)
+      (if above
+          (overlay-put ov 'before-string (concat indent rendered "\n"))
+        (overlay-put ov 'after-string (concat "\n" indent rendered))))))
 
 (defun eglot-signature-posframe--hide ()
-  "Hide the signature posframe if it is visible."
-  (setq
-   eglot-signature-posframe--frame nil
-   eglot-signature-posframe--signature-key nil)
-  (posframe-hide eglot-signature-posframe--buffer))
+  "Hide the inline signature if it is visible."
+  (when (overlayp eglot-signature-posframe--overlay)
+    (delete-overlay eglot-signature-posframe--overlay))
+  (setq eglot-signature-posframe--overlay nil
+        eglot-signature-posframe--signature-key nil
+        eglot-signature-posframe--active nil))
 
 ;;; Requesting signatures
 
 (defun eglot-signature-posframe--callback (string &rest _)
-  "Display STRING in the posframe, or hide it when STRING is empty.
+  "Display STRING inline, or hide the display when STRING is empty.
 Used as the callback for `eglot-signature-eldoc-function'."
   (if (and (stringp string) (> (length string) 0))
       (eglot-signature-posframe--show
@@ -204,7 +216,7 @@ Used as the callback for `eglot-signature-eldoc-function'."
     (eglot-signature-posframe--hide)))
 
 (defun eglot-signature-posframe--request (buffer)
-  "Request signature help for BUFFER and update the posframe."
+  "Request signature help for BUFFER and update the inline display."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (if (and (bound-and-true-p eglot-signature-posframe-mode)
@@ -212,7 +224,7 @@ Used as the callback for `eglot-signature-eldoc-function'."
                (eglot-server-capable :signatureHelpProvider))
           ;; `eglot-signature-eldoc-function' performs the request
           ;; asynchronously and calls our callback with the signature
-          ;; string, or nil when there is none (which hides the posframe).
+          ;; string, or nil when there is none (which hides the display).
           (eglot-signature-eldoc-function
            #'eglot-signature-posframe--callback)
         (eglot-signature-posframe--hide)))))
@@ -227,11 +239,61 @@ Used as the callback for `eglot-signature-eldoc-function'."
                              #'eglot-signature-posframe--request
                              (current-buffer))))
 
+;;; Triggering
+
+(defun eglot-signature-posframe--trigger-characters ()
+  "Return the characters that activate the signature display, as strings.
+These are the trigger characters advertised by the language server plus
+`eglot-signature-posframe-extra-trigger-characters'."
+  (let ((opts (eglot-server-capable :signatureHelpProvider)))
+    ;; `:triggerCharacters' is a vector of single-character strings;
+    ;; `append' coerces it to a list.  When the server advertised no
+    ;; options (a bare t) `plist-get' on it yields nil.
+    (append (and (listp opts) (plist-get opts :triggerCharacters))
+            eglot-signature-posframe-extra-trigger-characters
+            nil)))
+
+(defun eglot-signature-posframe--activate-p ()
+  "Non-nil when the command just run typed a trigger character."
+  (and (eq this-command 'self-insert-command)
+       (characterp last-command-event)
+       (member (char-to-string last-command-event)
+               (eglot-signature-posframe--trigger-characters))))
+
+(defun eglot-signature-posframe--post-command ()
+  "Decide whether to request a signature after the current command.
+A signature is requested only when a trigger character was just typed,
+or while one is already active so the display keeps up with editing.
+Ordinary navigation outside a call requests nothing."
+  (cond
+   ((memq this-command '(keyboard-quit eglot-signature-posframe-hide))
+    (eglot-signature-posframe--hide))
+   ((eglot-signature-posframe--activate-p)
+    (setq eglot-signature-posframe--active t)
+    (eglot-signature-posframe--schedule))
+   (eglot-signature-posframe--active
+    (eglot-signature-posframe--schedule))))
+
 ;;; Commands
 
 ;;;###autoload
+(defun eglot-signature-posframe-show ()
+  "Request and show the signature at point, regardless of trigger state.
+Use this to bring up the signature on demand, e.g. when point is already
+inside a call you did not just type."
+  (interactive)
+  (setq eglot-signature-posframe--active t)
+  (eglot-signature-posframe--request (current-buffer)))
+
+;;;###autoload
+(defun eglot-signature-posframe-hide ()
+  "Hide the inline signature."
+  (interactive)
+  (eglot-signature-posframe--hide))
+
+;;;###autoload
 (defun eglot-signature-posframe-toggle-position ()
-  "Toggle between showing the signature posframe above and below point."
+  "Toggle between showing the signature above and below point."
   (interactive)
   (setq eglot-signature-posframe-position
         (if (eq eglot-signature-posframe-position 'above)
@@ -244,11 +306,11 @@ Used as the callback for `eglot-signature-eldoc-function'."
 
 ;;;###autoload
 (define-minor-mode eglot-signature-posframe-mode
-  "Toggle showing eglot signature help in a posframe.
+  "Toggle showing eglot signature help inline near point.
 
-When enabled, signature help from eglot is shown in a child frame
+When enabled, signature help from eglot is shown as a virtual line
 near point instead of the echo area.  Only the signature is shown;
-documentation and hover help are not.  The posframe hides itself
+documentation and hover help are not.  The display hides itself
 automatically when there is no signature to show.
 
 This mode is intended to be enabled in eglot-managed buffers, e.g.:
@@ -259,10 +321,10 @@ This mode is intended to be enabled in eglot-managed buffers, e.g.:
   'eglot-signature-posframe
   (if eglot-signature-posframe-mode
       (add-hook
-       'post-command-hook #'eglot-signature-posframe--schedule
+       'post-command-hook #'eglot-signature-posframe--post-command
        nil t)
     (remove-hook
-     'post-command-hook #'eglot-signature-posframe--schedule
+     'post-command-hook #'eglot-signature-posframe--post-command
      t)
     (when (timerp eglot-signature-posframe--timer)
       (cancel-timer eglot-signature-posframe--timer)

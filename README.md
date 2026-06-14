@@ -1,8 +1,8 @@
 # eglot-signature-posframe
 
-Show [eglot](https://github.com/joaotavora/eglot) signature help in a
-[posframe](https://github.com/tumashu/posframe) (child frame) near point,
-instead of the echo area.
+Show [eglot](https://github.com/joaotavora/eglot) signature help inline near
+point, instead of the echo area. The signature is rendered as a virtual line
+using an overlay, so it appears instantly and works in terminal frames.
 
 ## Motivation
 I have been using `eglot` in many years. It is a great package, offering deep integration with many of Emacs's default behaviors. However, I have started writing Rust many times with eglot, I have encountered difficulty when writing Rust code. Packages in Rust have many, many methods and countless traits. I can not remember them or their signature while writing code.
@@ -16,6 +16,14 @@ No warranty while using this package, and this package is fully written by LLM. 
 
 ## Features
 
+- **Shows while you edit a call**
+  - The signature appears when you type a trigger character (`(` or `,`, as
+    advertised by the language server) and refreshes as you fill in the
+    arguments, so the active-parameter highlight keeps up. Ordinary
+    navigation does not bring it up.
+  - `M-x eglot-signature-posframe-show` requests it on demand (e.g. when
+    point is already inside a call); `M-x eglot-signature-posframe-hide` (or
+    `C-g`) dismisses it.
 - **Display signature only**
   - Only the function signature returned by the language
     server is shown. Documentation and hover help are never displayed — this
@@ -24,10 +32,11 @@ No warranty while using this package, and this package is fully written by LLM. 
     verbose parameter documentation. Set
     `eglot-signature-posframe-first-line-only` to `nil` for the full output.
 - **Above or below point**
-  - Choose where the posframe appears relative to cursor, and flip it on the fly.
+  - Choose where the signature appears relative to cursor, and flip it on the fly.
 - **Auto hide**
-  - When eglot reports no signature while the posframe is visible,
-    the posframe is hidden automatically. It also hides when you switch buffers.
+  - When eglot reports no signature — for example once you leave the call —
+    the inline display is hidden automatically. It also hides when you switch
+    buffers.
 
 ## Screenshot
 ![Screenshot](./screenshot/screenshot.png)
@@ -35,10 +44,11 @@ No warranty while using this package, and this package is fully written by LLM. 
 ## Requirements
 
 - Emacs 29.1+
-- [posframe](https://github.com/tumashu/posframe) 1.1.0+
 - [eglot](https://github.com/joaotavora/eglot) 1.15+ (bundled with Emacs 29+)
 
-A graphical Emacs (no -nw) was tested. If childframe can run in terminal, this might be able to run in a terminal (with `-nw` option).
+The signature is drawn as an overlay (a virtual line), not a child frame, so
+it works in both graphical and terminal (`-nw`) frames with no extra
+dependency.
 
 ## Installation
 
@@ -69,10 +79,12 @@ Enable the minor mode in eglot-managed buffers:
 (add-hook 'eglot-managed-mode-hook #'eglot-signature-posframe-mode)
 ```
 
-As you move point inside a function call, the signature appears in a child
-frame. When there is no signature, the frame disappears.
+As you type the arguments of a function call, the signature appears inline
+near point. When you leave the call, it disappears. To bring it up on demand,
+run `M-x eglot-signature-posframe-show`; to dismiss it, `M-x
+eglot-signature-posframe-hide` (or `C-g`).
 
-To flip the posframe between above and below point interactively:
+To flip the signature between above and below point interactively:
 
 ```
 M-x eglot-signature-posframe-toggle-position
@@ -84,20 +96,11 @@ M-x eglot-signature-posframe-toggle-position
 | --- | --- | --- |
 | `eglot-signature-posframe-position` | `above` | `below` or `above` point. |
 | `eglot-signature-posframe-delay` | `0.2` | Idle seconds before requesting a signature. |
-| `eglot-signature-posframe-border-width` | `1` | Outer border width in pixels. |
-| `eglot-signature-posframe-border-color` | `"gray50"` | Outer border color. |
+| `eglot-signature-posframe-border-width` | `1` | Box border width in pixels. `0` disables the box. |
+| `eglot-signature-posframe-border-color` | `"gray50"` | Box border color. |
 | `eglot-signature-posframe-max-width` | `nil` | Max width in characters, or `nil` for no limit. |
 | `eglot-signature-posframe-first-line-only` | `t` | Show only the first line of the signature, dropping verbose parameter documentation. Set to `nil` for the full multi-line signature. |
-| `eglot-signature-posframe-y-pixel-offset` | `0` | Vertical offset in pixels added to the posframe position (positive moves down). |
-| `eglot-signature-posframe-parameters` | `nil` | Extra frame parameters passed to `posframe-show`. |
-
-The text uses the `eglot-signature-posframe-face` face (inherits `default` by
-default), so you can restyle the foreground/background:
-
-```elisp
-(set-face-attribute 'eglot-signature-posframe-face nil
-                    :background "#2d2d2d" :foreground "#dcdcdc")
-```
+| `eglot-signature-posframe-extra-trigger-characters` | `nil` | Extra characters (as strings) that activate the display, added to the server's trigger characters. |
 
 ## License
 
